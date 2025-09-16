@@ -2,7 +2,7 @@
 #![deny(warnings)]
 #![warn(clippy::pedantic)]
 
-use anyhow::{bail, Result as AnyResult};
+use anyhow::{anyhow, Result as AnyResult};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -22,6 +22,42 @@ pub struct ExperimentState {
 #[derive(Clone, Default)]
 pub struct LoadController {
     pub state: Arc<Mutex<HashMap<String, ExperimentState>>>,
+}
+
+impl LoadController {
+    pub fn get_running_id(&self) -> Option<String> {
+        self.state
+            .lock()
+            .iter()
+            .find(|(_, st)| st.running)
+            .map(|(k, _)| k.clone())
+    }
+
+    pub fn start(&self, id: &str, exp: &Experiment) {
+        let mut map = self.state.lock();
+        map.insert(
+            id.to_string(),
+            ExperimentState {
+                running: true,
+                kind: match exp.kind {
+                    ExperimentKind::CPU => "CPU".into(),
+                    ExperimentKind::MEMORY => "MEMORY".into(),
+                },
+                total_duration_seconds: exp.duration_seconds,
+                remaining_seconds: exp.duration_seconds,
+                started_ts_seconds: exp.started_ts_seconds,
+                ends_ts_seconds: exp.ends_ts_seconds,
+            },
+        );
+    }
+
+    pub fn finish(&self, id: &str) {
+        let mut map = self.state.lock();
+        if let Some(st) = map.get_mut(id) {
+            st.running = false;
+            st.remaining_seconds = 0;
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -55,11 +91,11 @@ impl std::fmt::Display for ExperimentKind {
 
 impl FromStr for ExperimentKind {
     type Err = anyhow::Error;
-    fn from_str(s: &str) -> AnyResult<Self> {
+    fn from_str(s: &str) -> Result<Self, anyhow::Error> {
         match s {
             "CPU" => Ok(Self::CPU),
             "MEMORY" => Ok(Self::MEMORY),
-            other => bail!(format!("unsupported kind: {other}")),
+            other => Err(anyhow::anyhow!("unsupported kind: {other}")),
         }
     }
 }
@@ -81,32 +117,16 @@ impl Experiment {
         params: ExperimentParams,
         duration_seconds: u32,
         started_ts_seconds: i64,
-    ) -> AnyResult<Self> {
-        if id.trim().is_empty() {
-            bail!("experiment_id is empty");
-        }
-        if duration_seconds == 0 {
-            bail!("duration_seconds must be > 0");
-        }
-        // validate params against kind
-        match (&kind, &params) {
-            (ExperimentKind::CPU, ExperimentParams::Cpu { duty_percent }) => {
-                if !(1..=100).contains(duty_percent) {
-                    bail!("cpu duty_percent must be 1..=100");
-                }
-            }
-            (ExperimentKind::MEMORY, ExperimentParams::Memory { memory_mb: _ }) => {}
-            _ => bail!("kind and params mismatch"),
-        }
+    ) -> Self {
         let ends_ts_seconds = started_ts_seconds + duration_seconds as i64;
-        Ok(Self {
+        Self {
             id,
             kind,
             params,
             duration_seconds,
             started_ts_seconds,
             ends_ts_seconds,
-        })
+        }
     }
 
     pub fn remaining_seconds(&self, now_ts: i64) -> u32 {
@@ -140,13 +160,13 @@ pub fn build_experiment(req: &StartRequest, now_ts: i64) -> AnyResult<Experiment
         (ExperimentKind::MEMORY, StartParams::Memory { memory_mb }) => ExperimentParams::Memory {
             memory_mb: *memory_mb,
         },
-        _ => bail!("kind and params mismatch"),
+        _ => return Err(anyhow!("kind and params mismatch")),
     };
-    Experiment::new(
+    Ok(Experiment::new(
         req.experiment_id.clone(),
         kind,
         params,
         req.duration_seconds,
         now_ts,
-    )
+    ))
 }

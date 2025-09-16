@@ -7,9 +7,8 @@ use anyhow::Result as AnyResult;
 use serde_json::json;
 use tracing::{error, info, warn};
 
-use crate::domain::{
-    build_experiment, AppState, ExperimentKind, ExperimentParams, ExperimentState, StartRequest,
-};
+use crate::domain::build_experiment;
+use crate::domain::{AppState, ExperimentParams, StartRequest};
 use crate::metrics::Metrics;
 use crate::validation::validate_start;
 
@@ -22,50 +21,20 @@ pub async fn start(payload: web::Json<StartRequest>, data: web::Data<AppState>) 
         warn!(experiment=%id, error=%format!("{e:#}"), "invalid start request");
         return json_error(actix_web::http::StatusCode::BAD_REQUEST, &format!("{e:#}"));
     }
-    // single-flight guard: deny if any experiment is running
-    {
-        let map = data.ctrl.state.lock();
-        if let Some((running_id, _)) = map
-            .iter()
-            .find(|(_, s)| s.running)
-            .map(|(k, v)| (k.clone(), v.clone()))
-        {
-            warn!(experiment=%id, running=%running_id, "another experiment is in progress");
-            return json_error(
-                actix_web::http::StatusCode::CONFLICT,
-                &format!("another experiment running: {running_id}"),
-            );
-        }
+    if let Some(running_id) = data.ctrl.get_running_id() {
+        warn!(experiment=%id, running=%running_id, "another experiment is in progress");
+        return json_error(
+            actix_web::http::StatusCode::CONFLICT,
+            &format!("another experiment running: {running_id}"),
+        );
     }
     let now = chrono::Utc::now().timestamp();
     let exp = match build_experiment(&req, now) {
         Ok(e) => e,
         Err(e) => return json_error(actix_web::http::StatusCode::BAD_REQUEST, &format!("{e:#}")),
     };
-    {
-        let mut map = data.ctrl.state.lock();
-        map.insert(
-            id.clone(),
-            ExperimentState {
-                running: true,
-                kind: match exp.kind {
-                    ExperimentKind::CPU => "CPU".into(),
-                    ExperimentKind::MEMORY => "MEMORY".into(),
-                },
-                total_duration_seconds: exp.duration_seconds,
-                remaining_seconds: exp.duration_seconds,
-                started_ts_seconds: exp.started_ts_seconds,
-                ends_ts_seconds: exp.ends_ts_seconds,
-            },
-        );
-    }
-    data.metrics.experiment_active.set(1);
-    data.metrics
-        .experiment_total_seconds
-        .set(req.duration_seconds as i64);
-    data.metrics
-        .experiment_remaining_seconds
-        .set(req.duration_seconds as i64);
+    data.ctrl.start(&id, &exp);
+    data.metrics.mark_experiment_started(exp.duration_seconds);
     let mclone = data.metrics.clone();
     tokio::spawn(async move {
         match exp.params {
@@ -83,18 +52,8 @@ pub async fn start(payload: web::Json<StartRequest>, data: web::Data<AppState>) 
                 }
             }
         }
-        // mark finished if present
-        let map = data.ctrl.state.lock();
-        if map.get(&id).is_some() {
-            drop(map);
-            let mut map2 = data.ctrl.state.lock();
-            if let Some(st) = map2.get_mut(&id) {
-                st.running = false;
-                st.remaining_seconds = 0;
-            }
-        }
-        data.metrics.experiment_active.set(0);
-        data.metrics.experiment_remaining_seconds.set(0);
+        data.ctrl.finish(&id);
+        data.metrics.mark_experiment_finished();
         info!(experiment=%id, "experiment finished");
     });
     HttpResponse::Accepted().json(json!({"status":"ok"}))

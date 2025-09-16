@@ -12,8 +12,7 @@ pub async fn cpu_load(
     mtr: crate::metrics::Metrics,
 ) -> AnyResult<()> {
     let cpu_percent = cpu_percent.max(1).min(100);
-    mtr.cpu_hog_active.set(1);
-    mtr.cpu_hog_duty_percent.set(cpu_percent as i64);
+    mtr.mark_cpu_active(cpu_percent);
     // Model duty cycle per second: busy for (cpu_percent)% of 1s, sleep for the rest.
     let on = Duration::from_millis((10 * cpu_percent) as u64); // scale to 1s window: 10ms * percent = X% of 1s
     let off = Duration::from_millis((1000 - (10 * cpu_percent)) as u64);
@@ -32,6 +31,6 @@ pub async fn cpu_load(
             last_seconds_inc = 0;
         }
     }
-    mtr.cpu_hog_active.set(0);
+    mtr.clear_cpu_active();
     Ok(())
 }

@@ -78,4 +78,32 @@ impl Metrics {
         encoder.encode(&mf, &mut buf).context("encode metrics")?;
         Ok(buf)
     }
+
+    pub fn mark_experiment_started(&self, total_seconds: u32) {
+        self.experiment_active.set(1);
+        self.experiment_total_seconds.set(i64::from(total_seconds));
+        self.experiment_remaining_seconds
+            .set(i64::from(total_seconds));
+    }
+
+    pub fn mark_experiment_finished(&self) {
+        self.experiment_active.set(0);
+        self.experiment_remaining_seconds.set(0);
+    }
+
+    pub fn update_remaining(&self, remaining_seconds: u32) {
+        self.experiment_remaining_seconds
+            .set(i64::from(remaining_seconds));
+    }
+
+    pub fn mark_cpu_active(&self, duty_percent: u32) {
+        self.cpu_hog_active.set(1);
+        self.cpu_hog_duty_percent
+            .set(i64::from(duty_percent.min(100).max(1)));
+    }
+
+    pub fn clear_cpu_active(&self) {
+        self.cpu_hog_active.set(0);
+        self.cpu_hog_duty_percent.set(0);
+    }
 }
