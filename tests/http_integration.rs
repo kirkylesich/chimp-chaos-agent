@@ -7,7 +7,7 @@ use chimp_chaos_agent::{AppState, LoadController, Metrics, healthz, start, stop,
 
 #[actix_web::test]
 async fn start_stop_and_metrics() {
-    let state = AppState { ctrl: LoadController::default(), metrics: Metrics::new() };
+    let state = AppState { ctrl: LoadController::default(), metrics: Metrics::new().unwrap() };
     let app = test::init_service(
         App::new()
             .app_data(actix_web::web::Data::new(state))
