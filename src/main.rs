@@ -2,11 +2,12 @@
 #![deny(warnings)]
 #![warn(clippy::pedantic)]
 
-use tracing::info;
 pub use chimp_chaos_agent::serve;
+use tracing::info;
 
 fn init_tracing() {
-    let fmt = tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env());
+    let fmt = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env());
     fmt.json().init();
 }
 
@@ -18,4 +19,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     serve(bind).await?;
     Ok(())
 }
-
