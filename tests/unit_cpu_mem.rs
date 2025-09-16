@@ -16,4 +16,3 @@ async fn mem_runs() {
         .await
         .expect("ok");
 }
-

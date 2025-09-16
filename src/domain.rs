@@ -2,12 +2,12 @@
 #![deny(warnings)]
 #![warn(clippy::pedantic)]
 
+use anyhow::{bail, Result as AnyResult};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::str::FromStr;
-use anyhow::{Result as AnyResult, bail};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ExperimentState {
@@ -82,22 +82,39 @@ impl Experiment {
         duration_seconds: u32,
         started_ts_seconds: i64,
     ) -> AnyResult<Self> {
-        if id.trim().is_empty() { bail!("experiment_id is empty"); }
-        if duration_seconds == 0 { bail!("duration_seconds must be > 0"); }
+        if id.trim().is_empty() {
+            bail!("experiment_id is empty");
+        }
+        if duration_seconds == 0 {
+            bail!("duration_seconds must be > 0");
+        }
         // validate params against kind
         match (&kind, &params) {
             (ExperimentKind::CPU, ExperimentParams::Cpu { duty_percent }) => {
-                if !(1..=100).contains(duty_percent) { bail!("cpu duty_percent must be 1..=100"); }
+                if !(1..=100).contains(duty_percent) {
+                    bail!("cpu duty_percent must be 1..=100");
+                }
             }
             (ExperimentKind::MEMORY, ExperimentParams::Memory { memory_mb: _ }) => {}
             _ => bail!("kind and params mismatch"),
         }
         let ends_ts_seconds = started_ts_seconds + duration_seconds as i64;
-        Ok(Self { id, kind, params, duration_seconds, started_ts_seconds, ends_ts_seconds })
+        Ok(Self {
+            id,
+            kind,
+            params,
+            duration_seconds,
+            started_ts_seconds,
+            ends_ts_seconds,
+        })
     }
 
     pub fn remaining_seconds(&self, now_ts: i64) -> u32 {
-        if now_ts >= self.ends_ts_seconds { 0 } else { (self.ends_ts_seconds - now_ts) as u32 }
+        if now_ts >= self.ends_ts_seconds {
+            0
+        } else {
+            (self.ends_ts_seconds - now_ts) as u32
+        }
     }
 }
 
@@ -117,8 +134,12 @@ pub enum ExperimentParams {
 pub fn build_experiment(req: &StartRequest, now_ts: i64) -> AnyResult<Experiment> {
     let kind = ExperimentKind::from_str(&req.kind)?;
     let params = match (&kind, &req.params) {
-        (ExperimentKind::CPU, StartParams::Cpu { duty_percent }) => ExperimentParams::Cpu { duty_percent: *duty_percent },
-        (ExperimentKind::MEMORY, StartParams::Memory { memory_mb }) => ExperimentParams::Memory { memory_mb: *memory_mb },
+        (ExperimentKind::CPU, StartParams::Cpu { duty_percent }) => ExperimentParams::Cpu {
+            duty_percent: *duty_percent,
+        },
+        (ExperimentKind::MEMORY, StartParams::Memory { memory_mb }) => ExperimentParams::Memory {
+            memory_mb: *memory_mb,
+        },
         _ => bail!("kind and params mismatch"),
     };
     Experiment::new(

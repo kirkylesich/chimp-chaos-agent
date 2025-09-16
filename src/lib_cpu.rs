@@ -5,7 +5,12 @@
 use anyhow::Result as AnyResult;
 use tokio::time::{sleep, Duration};
 
-pub async fn cpu_load(_experiment_id: String, cpu_percent: u32, duration_seconds: u32, mtr: crate::metrics::Metrics) -> AnyResult<()> {
+pub async fn cpu_load(
+    _experiment_id: String,
+    cpu_percent: u32,
+    duration_seconds: u32,
+    mtr: crate::metrics::Metrics,
+) -> AnyResult<()> {
     let cpu_percent = cpu_percent.max(1).min(100);
     mtr.cpu_hog_active.set(1);
     mtr.cpu_hog_duty_percent.set(cpu_percent as i64);
@@ -16,7 +21,9 @@ pub async fn cpu_load(_experiment_id: String, cpu_percent: u32, duration_seconds
     let mut last_seconds_inc = 0u64;
     while tokio::time::Instant::now() < end {
         let spin_until = tokio::time::Instant::now() + on;
-        while tokio::time::Instant::now() < spin_until { std::hint::spin_loop(); }
+        while tokio::time::Instant::now() < spin_until {
+            std::hint::spin_loop();
+        }
         sleep(off).await;
         // Increase cpu_seconds_total at 1 Hz
         last_seconds_inc += 1;
@@ -28,5 +35,3 @@ pub async fn cpu_load(_experiment_id: String, cpu_percent: u32, duration_seconds
     mtr.cpu_hog_active.set(0);
     Ok(())
 }
-
-

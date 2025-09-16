@@ -10,4 +10,3 @@ fn create_and_encode() {
     let buf = m.encode_text().expect("encode");
     assert!(!buf.is_empty());
 }
-

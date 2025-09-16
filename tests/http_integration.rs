@@ -49,7 +49,10 @@ async fn start_stop_and_metrics() {
     eprintln!("/experiments start status: {}", resp.status());
     if !resp.status().is_success() {
         let body = test::read_body(resp).await;
-        eprintln!("/experiments start body: {}", String::from_utf8_lossy(&body));
+        eprintln!(
+            "/experiments start body: {}",
+            String::from_utf8_lossy(&body)
+        );
         panic!("/experiments start failed");
     }
 
