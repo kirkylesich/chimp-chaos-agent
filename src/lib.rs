@@ -2,11 +2,12 @@
 #![deny(warnings)]
 #![warn(clippy::pedantic)]
 
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{get, post, web, App, HttpResponse, HttpServer};
 use anyhow::{Context, Result as AnyResult};
 use parking_lot::Mutex;
 use prometheus::{Encoder, IntCounter, IntGauge, Opts, Registry, TextEncoder};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
@@ -79,10 +80,14 @@ pub struct StartRequest {
 pub struct Empty {}
 
 #[post("/experiments")]
-pub async fn start(payload: web::Json<StartRequest>, data: web::Data<AppState>) -> impl Responder {
+pub async fn start(payload: web::Json<StartRequest>, data: web::Data<AppState>) -> HttpResponse {
     let req = payload.into_inner();
     let id = req.experiment_id.clone();
     info!(experiment=%id, kind=%req.kind, cpu=?req.cpu_percent, mem=?req.memory_mb, duration=req.duration_seconds, "start experiment request");
+    if let Err(e) = validate_start(&req) {
+        warn!(experiment=%id, error=%format!("{e:#}"), "invalid start request");
+        return json_error(actix_web::http::StatusCode::BAD_REQUEST, &format!("{e:#}"));
+    }
     {
         let mut map = data.ctrl.state.lock();
         map.insert(
@@ -120,49 +125,53 @@ pub async fn start(payload: web::Json<StartRequest>, data: web::Data<AppState>) 
                 }
             }
             other => {
-                warn!(experiment=%id, kind=%other, "unknown kind, falling back to CPU");
-                if let Err(e) = cpu_load(
-                    id.clone(),
-                    req.cpu_percent.unwrap_or(50),
-                    req.duration_seconds,
-                    mclone,
-                )
-                .await
-                {
-                    error!(experiment=%id, error=%format!("{e:#}"), "cpu load failed");
-                }
+                warn!(experiment=%id, kind=%other, "unknown kind, skipping");
             }
         }
     });
-    HttpResponse::Ok().finish()
+    HttpResponse::Accepted().json(json!({"status":"ok"}))
 }
 
 #[post("/experiments/{id}/stop")]
-pub async fn stop(path: web::Path<String>, data: web::Data<AppState>) -> impl Responder {
+pub async fn stop(path: web::Path<String>, data: web::Data<AppState>) -> HttpResponse {
     let id = path.into_inner();
     let mut map = data.ctrl.state.lock();
-    if let Some(st) = map.get_mut(&id) {
-        st.running = false;
+    match map.get_mut(&id) {
+        Some(st) => {
+            st.running = false;
+            info!(experiment=%id, "stop experiment request");
+            HttpResponse::Ok().json(json!({"status":"ok"}))
+        }
+        None => {
+            warn!(experiment=%id, "stop: not found");
+            json_error(
+                actix_web::http::StatusCode::NOT_FOUND,
+                "experiment not found",
+            )
+        }
     }
-    info!(experiment=%id, "stop experiment request");
-    HttpResponse::Ok().finish()
 }
 
 #[get("/healthz")]
-pub async fn healthz() -> impl Responder {
-    HttpResponse::Ok().body("ok")
+pub async fn healthz() -> HttpResponse {
+    HttpResponse::Ok().json(json!({"status":"ok"}))
 }
 
 #[get("/experiments/{id}/status")]
-pub async fn status(path: web::Path<String>, data: web::Data<AppState>) -> impl Responder {
+pub async fn status(path: web::Path<String>, data: web::Data<AppState>) -> HttpResponse {
     let id = path.into_inner();
     let map = data.ctrl.state.lock();
-    let st = map.get(&id).cloned().unwrap_or_default();
-    HttpResponse::Ok().json(st)
+    match map.get(&id).cloned() {
+        Some(st) => HttpResponse::Ok().json(st),
+        None => json_error(
+            actix_web::http::StatusCode::NOT_FOUND,
+            "experiment not found",
+        ),
+    }
 }
 
 #[get("/metrics")]
-pub async fn scrape_metrics(data: web::Data<AppState>) -> impl Responder {
+pub async fn scrape_metrics(data: web::Data<AppState>) -> HttpResponse {
     let mut buf = Vec::new();
     let encoder = TextEncoder::new();
     let mf = data.metrics.registry.gather();
@@ -172,7 +181,7 @@ pub async fn scrape_metrics(data: web::Data<AppState>) -> impl Responder {
             .body(buf),
         Err(e) => {
             error!(error=%format!("{e:#}"), "encode metrics failed");
-            HttpResponse::InternalServerError().finish()
+            HttpResponse::InternalServerError().body("encode metrics failed")
         }
     }
 }
@@ -243,4 +252,30 @@ pub async fn serve(bind: &str) -> std::io::Result<()> {
     .bind(bind)?
     .run()
     .await
+}
+
+fn validate_start(req: &StartRequest) -> AnyResult<()> {
+    if req.experiment_id.trim().is_empty() {
+        anyhow::bail!("experiment_id is empty");
+    }
+    if req.duration_seconds == 0 {
+        anyhow::bail!("duration_seconds must be > 0");
+    }
+    match req.kind.as_str() {
+        "CPU" => {
+            let p = req.cpu_percent.unwrap_or(50);
+            if p == 0 || p > 100 {
+                anyhow::bail!("cpu_percent must be 1..=100");
+            }
+        }
+        "MEMORY" => {
+            let _m = req.memory_mb.unwrap_or(50);
+        }
+        other => anyhow::bail!(format!("unsupported kind: {other}")),
+    }
+    Ok(())
+}
+
+fn json_error(code: actix_web::http::StatusCode, reason: &str) -> HttpResponse {
+    HttpResponse::build(code).json(json!({"status":"error","reason":reason}))
 }
