@@ -7,7 +7,7 @@ use anyhow::Result as AnyResult;
 use serde_json::json;
 use tracing::{error, info, warn};
 
-use crate::domain::{AppState, ExperimentState, StartRequest};
+use crate::domain::{AppState, ExperimentState, StartRequest, build_experiment, ExperimentParams, ExperimentKind};
 use crate::metrics::Metrics;
 use crate::validation::validate_start;
 
@@ -15,7 +15,7 @@ use crate::validation::validate_start;
 pub async fn start(payload: web::Json<StartRequest>, data: web::Data<AppState>) -> HttpResponse {
     let req = payload.into_inner();
     let id = req.experiment_id.clone();
-    info!(experiment=%id, kind=%req.kind, cpu=?req.cpu_percent, mem=?req.memory_mb, duration=req.duration_seconds, "start experiment request");
+    info!(experiment=%id, kind=%req.kind, duration=req.duration_seconds, "start experiment request");
     if let Err(e) = validate_start(&req) {
         warn!(experiment=%id, error=%format!("{e:#}"), "invalid start request");
         return json_error(actix_web::http::StatusCode::BAD_REQUEST, &format!("{e:#}"));
@@ -28,20 +28,36 @@ pub async fn start(payload: web::Json<StartRequest>, data: web::Data<AppState>) 
             return json_error(actix_web::http::StatusCode::CONFLICT, &format!("another experiment running: {running_id}"));
         }
     }
+    let now = chrono::Utc::now().timestamp();
+    let exp = match build_experiment(&req, now) {
+        Ok(e) => e,
+        Err(e) => return json_error(actix_web::http::StatusCode::BAD_REQUEST, &format!("{e:#}")),
+    };
     {
         let mut map = data.ctrl.state.lock();
-        map.insert(id.clone(), ExperimentState { running: true, kind: req.kind.clone() });
+        map.insert(id.clone(), ExperimentState {
+            running: true,
+            kind: match exp.kind { ExperimentKind::CPU => "CPU".into(), ExperimentKind::MEMORY => "MEMORY".into() },
+            total_duration_seconds: exp.duration_seconds,
+            remaining_seconds: exp.duration_seconds,
+            started_ts_seconds: exp.started_ts_seconds,
+            ends_ts_seconds: exp.ends_ts_seconds,
+        });
     }
+    data.metrics.experiment_active.set(1);
+    data.metrics.experiment_total_seconds.set(req.duration_seconds as i64);
+    data.metrics.experiment_remaining_seconds.set(req.duration_seconds as i64);
     let mclone = data.metrics.clone();
     tokio::spawn(async move {
-        match req.kind.as_str() {
-            "CPU" => { if let Err(e) = cpu_load_task(id.clone(), req.cpu_percent.unwrap_or(50), req.duration_seconds, mclone).await { error!(experiment=%id, error=%format!("{e:#}"), "cpu load failed"); } }
-            "MEMORY" => { if let Err(e) = memory_load_task(id.clone(), req.memory_mb.unwrap_or(50), req.duration_seconds).await { error!(experiment=%id, error=%format!("{e:#}"), "memory load failed"); } }
-            other => warn!(experiment=%id, kind=%other, "unknown kind, skipping"),
+        match exp.params {
+            ExperimentParams::Cpu { duty_percent } => { if let Err(e) = cpu_load_task(id.clone(), duty_percent, exp.duration_seconds, mclone).await { error!(experiment=%id, error=%format!("{e:#}"), "cpu load failed"); } }
+            ExperimentParams::Memory { memory_mb } => { if let Err(e) = memory_load_task(id.clone(), memory_mb, exp.duration_seconds).await { error!(experiment=%id, error=%format!("{e:#}"), "memory load failed"); } }
         }
         // mark finished if present
         let map = data.ctrl.state.lock();
-        if map.get(&id).is_some() { drop(map); let mut map2 = data.ctrl.state.lock(); if let Some(st) = map2.get_mut(&id) { st.running = false; } }
+        if map.get(&id).is_some() { drop(map); let mut map2 = data.ctrl.state.lock(); if let Some(st) = map2.get_mut(&id) { st.running = false; st.remaining_seconds = 0; } }
+        data.metrics.experiment_active.set(0);
+        data.metrics.experiment_remaining_seconds.set(0);
         info!(experiment=%id, "experiment finished");
     });
     HttpResponse::Accepted().json(json!({"status":"ok"}))

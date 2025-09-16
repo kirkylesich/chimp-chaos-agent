@@ -27,16 +27,31 @@ async fn start_stop_and_metrics() {
     // healthz
     let req = test::TestRequest::get().uri("/healthz").to_request();
     let resp = test::call_service(&app, req).await;
-    assert!(resp.status().is_success());
+    eprintln!("/metrics status: {}", resp.status());
+    if !resp.status().is_success() {
+        let body = test::read_body(resp).await;
+        eprintln!("/metrics body: {}", String::from_utf8_lossy(&body));
+        panic!("/metrics failed");
+    }
 
     // start CPU
-    let body = serde_json::json!({"experiment_id":"exp2","kind":"CPU","cpu_percent":10,"duration_seconds":1});
+    let body = serde_json::json!({
+        "experiment_id":"exp2",
+        "kind":"CPU",
+        "duration_seconds":1,
+        "params": {"type":"CPU", "duty_percent":10}
+    });
     let req = test::TestRequest::post()
         .uri("/experiments")
         .set_json(body)
         .to_request();
     let resp = test::call_service(&app, req).await;
-    assert!(resp.status().is_success());
+    eprintln!("/experiments start status: {}", resp.status());
+    if !resp.status().is_success() {
+        let body = test::read_body(resp).await;
+        eprintln!("/experiments start body: {}", String::from_utf8_lossy(&body));
+        panic!("/experiments start failed");
+    }
 
     // metrics scrape
     let req = test::TestRequest::get().uri("/metrics").to_request();
