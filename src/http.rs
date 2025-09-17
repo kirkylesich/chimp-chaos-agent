@@ -35,6 +35,12 @@ pub async fn start(payload: web::Json<StartRequest>, data: web::Data<AppState>) 
     };
     data.ctrl.start(&id, &exp);
     data.metrics.mark_experiment_started(exp.duration_seconds);
+    data.metrics.set_running_info(
+        &exp.id,
+        &exp.kind_label(),
+        &exp.params_label(),
+        exp.duration_seconds,
+    );
     let mclone = data.metrics.clone();
     tokio::spawn(async move {
         match exp.params {
@@ -53,6 +59,12 @@ pub async fn start(payload: web::Json<StartRequest>, data: web::Data<AppState>) 
             }
         }
         data.ctrl.finish(&id);
+        data.metrics.clear_running_info(
+            &exp.id,
+            &exp.kind_label(),
+            &exp.params_label(),
+            exp.duration_seconds,
+        );
         data.metrics.mark_experiment_finished();
         info!(experiment=%id, "experiment finished");
     });

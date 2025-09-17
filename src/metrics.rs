@@ -3,7 +3,7 @@
 #![warn(clippy::pedantic)]
 
 use anyhow::{Context, Result as AnyResult};
-use prometheus::{Encoder, IntCounter, IntGauge, Opts, Registry, TextEncoder};
+use prometheus::{Encoder, IntCounter, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
 
 #[derive(Clone)]
 pub struct Metrics {
@@ -14,6 +14,7 @@ pub struct Metrics {
     pub experiment_active: IntGauge,
     pub experiment_total_seconds: IntGauge,
     pub experiment_remaining_seconds: IntGauge,
+    pub experiment_running: IntGaugeVec,
 }
 
 impl Metrics {
@@ -60,6 +61,17 @@ impl Metrics {
         registry
             .register(Box::new(experiment_remaining_seconds.clone()))
             .context("register experiment_remaining_seconds")?;
+        let experiment_running = IntGaugeVec::new(
+            Opts::new(
+                "agent_running_experiment",
+                "present only when an experiment is running",
+            ),
+            &["experiment_id", "kind", "params", "total_seconds"],
+        )
+        .context("create experiment_running")?;
+        registry
+            .register(Box::new(experiment_running.clone()))
+            .context("register experiment_running")?;
         Ok(Self {
             registry,
             cpu_hog_active,
@@ -68,6 +80,7 @@ impl Metrics {
             experiment_active,
             experiment_total_seconds,
             experiment_remaining_seconds,
+            experiment_running,
         })
     }
 
@@ -105,5 +118,30 @@ impl Metrics {
     pub fn clear_cpu_active(&self) {
         self.cpu_hog_active.set(0);
         self.cpu_hog_duty_percent.set(0);
+    }
+
+    pub fn set_running_info(
+        &self,
+        experiment_id: &str,
+        kind: &str,
+        params: &str,
+        total_seconds: u32,
+    ) {
+        let g = self
+            .experiment_running
+            .with_label_values(&[experiment_id, kind, params, &total_seconds.to_string()]);
+        g.set(1);
+    }
+
+    pub fn clear_running_info(
+        &self,
+        experiment_id: &str,
+        kind: &str,
+        params: &str,
+        total_seconds: u32,
+    ) {
+        let _ = self
+            .experiment_running
+            .remove_label_values(&[experiment_id, kind, params, &total_seconds.to_string()]);
     }
 }

@@ -136,6 +136,17 @@ impl Experiment {
             (self.ends_ts_seconds - now_ts) as u32
         }
     }
+
+    pub fn kind_label(&self) -> String {
+        self.kind.to_string()
+    }
+
+    pub fn params_label(&self) -> String {
+        match &self.params {
+            ExperimentParams::Cpu { duty_percent } => format!("duty_percent={}", duty_percent),
+            ExperimentParams::Memory { memory_mb } => format!("memory_mb={}", memory_mb),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
