@@ -56,8 +56,15 @@ pub async fn stop(path: web::Path<String>, data: web::Data<AppState>) -> HttpRes
 }
 
 #[get("/healthz")]
-pub async fn healthz() -> HttpResponse {
-    HttpResponse::Ok().json(json!({"status":"ok"}))
+pub async fn healthz(data: web::Data<AppState>) -> HttpResponse {
+    let runner = ExperimentRunner::new(data.ctrl.clone(), data.metrics.clone());
+    let report = runner.health();
+    let code = if report.status == "ok" {
+        actix_web::http::StatusCode::OK
+    } else {
+        actix_web::http::StatusCode::SERVICE_UNAVAILABLE
+    };
+    HttpResponse::build(code).json(report)
 }
 
 #[get("/experiments/{id}/status")]

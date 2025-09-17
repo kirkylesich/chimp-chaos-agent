@@ -3,6 +3,7 @@
 #![warn(clippy::pedantic)]
 
 use anyhow::Result as AnyResult;
+use serde::Serialize;
 
 use crate::domain::{Experiment, ExperimentParams, ExperimentState, LoadController, StartRequest};
 use crate::metrics::Metrics;
@@ -91,4 +92,43 @@ impl ExperimentRunner {
     pub fn encode_metrics(&self) -> AnyResult<Vec<u8>> {
         self.metrics.encode_text()
     }
+
+    pub fn health(&self) -> HealthReport {
+        let map = self.ctrl.state.lock();
+        let running_entry = map.iter().find(|(_, st)| st.running);
+        let running = running_entry.is_some();
+        let running_id = running_entry.map(|(k, _)| k.clone());
+        let invariants_ok = map.values().all(|st| {
+            let duration = i64::from(st.total_duration_seconds);
+            let diff = st.ends_ts_seconds - st.started_ts_seconds;
+            diff == duration
+                && st.ends_ts_seconds >= st.started_ts_seconds
+                && st.remaining_seconds <= st.total_duration_seconds
+        });
+        let metrics_ok = self.metrics.encode_text().is_ok();
+        let registry_metrics = self.metrics.registry.gather().len();
+        let status = if metrics_ok && invariants_ok {
+            "ok"
+        } else {
+            "degraded"
+        };
+        HealthReport {
+            status: status.to_string(),
+            running,
+            running_id,
+            metrics_ok,
+            registry_metrics,
+            invariants_ok,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct HealthReport {
+    pub status: String,
+    pub running: bool,
+    pub running_id: Option<String>,
+    pub metrics_ok: bool,
+    pub registry_metrics: usize,
+    pub invariants_ok: bool,
 }
