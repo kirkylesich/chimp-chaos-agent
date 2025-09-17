@@ -127,9 +127,12 @@ impl Metrics {
         params: &str,
         total_seconds: u32,
     ) {
-        let g = self
-            .experiment_running
-            .with_label_values(&[experiment_id, kind, params, &total_seconds.to_string()]);
+        let g = self.experiment_running.with_label_values(&[
+            experiment_id,
+            kind,
+            params,
+            &total_seconds.to_string(),
+        ]);
         g.set(1);
     }
 
@@ -140,8 +143,11 @@ impl Metrics {
         params: &str,
         total_seconds: u32,
     ) {
-        let _ = self
-            .experiment_running
-            .remove_label_values(&[experiment_id, kind, params, &total_seconds.to_string()]);
+        let _ = self.experiment_running.remove_label_values(&[
+            experiment_id,
+            kind,
+            params,
+            &total_seconds.to_string(),
+        ]);
     }
 }

@@ -147,6 +147,28 @@ impl Experiment {
             ExperimentParams::Memory { memory_mb } => format!("memory_mb={}", memory_mb),
         }
     }
+
+    pub fn new_from_start_request(req: &StartRequest, now_ts: i64) -> AnyResult<Self> {
+        let kind = ExperimentKind::from_str(&req.kind)?;
+        let params = match (&kind, &req.params) {
+            (ExperimentKind::CPU, StartParams::Cpu { duty_percent }) => ExperimentParams::Cpu {
+                duty_percent: *duty_percent,
+            },
+            (ExperimentKind::MEMORY, StartParams::Memory { memory_mb }) => {
+                ExperimentParams::Memory {
+                    memory_mb: *memory_mb,
+                }
+            }
+            _ => return Err(anyhow!("kind and params mismatch")),
+        };
+        Ok(Self::new(
+            req.experiment_id.clone(),
+            kind,
+            params,
+            req.duration_seconds,
+            now_ts,
+        ))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -160,24 +182,4 @@ pub enum StartParams {
 pub enum ExperimentParams {
     Cpu { duty_percent: u32 },
     Memory { memory_mb: u32 },
-}
-
-pub fn build_experiment(req: &StartRequest, now_ts: i64) -> AnyResult<Experiment> {
-    let kind = ExperimentKind::from_str(&req.kind)?;
-    let params = match (&kind, &req.params) {
-        (ExperimentKind::CPU, StartParams::Cpu { duty_percent }) => ExperimentParams::Cpu {
-            duty_percent: *duty_percent,
-        },
-        (ExperimentKind::MEMORY, StartParams::Memory { memory_mb }) => ExperimentParams::Memory {
-            memory_mb: *memory_mb,
-        },
-        _ => return Err(anyhow!("kind and params mismatch")),
-    };
-    Ok(Experiment::new(
-        req.experiment_id.clone(),
-        kind,
-        params,
-        req.duration_seconds,
-        now_ts,
-    ))
 }
