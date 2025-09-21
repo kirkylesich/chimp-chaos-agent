@@ -127,3 +127,11 @@ def tilt_demo():
 #   To see it in action, try uncommenting the following line with
 #   Tilt running.
 # tilt_demo()
+
+allow_k8s_contexts('arn:aws:eks:eu-central-1:381509085286:cluster/eks-main')
+
+docker_build('kirill02102/chimp-chaos-agent', context='.', dockerfile='./Dockerfile', live_update=[
+    sync('./target/release/chimp-chaos-agent', '/usr/local/bin/chimp-chaos-agent'),
+])
+
+k8s_yaml('k8s/daemonset.yaml')
